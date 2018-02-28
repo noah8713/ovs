@@ -36,6 +36,7 @@
 #include "command-line.h"
 #include "fatal-signal.h"
 #include "flow.h"
+#include "openvswitch/ofp-util.h"
 #include "ovstest.h"
 #include "ovs-atomic.h"
 #include "ovs-thread.h"
@@ -1495,11 +1496,11 @@ benchmark(bool use_wc)
 static uint32_t
 random_value(void)
 {
-    static const uint32_t values_[] =
+    static const uint32_t values[] =
         { 0xffffffff, 0xaaaaaaaa, 0x55555555, 0x80000000,
           0x00000001, 0xface0000, 0x00d00d1e, 0xdeadbeef };
 
-    return values_[random_range(ARRAY_SIZE(values_))];
+    return values[random_range(ARRAY_SIZE(values))];
 }
 
 static bool

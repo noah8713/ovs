@@ -155,7 +155,7 @@ static int
 route_table_reset(void)
 {
     struct nl_dump dump;
-    struct rtgenmsg *rtgenmsg;
+    struct rtgenmsg *rtmsg;
     uint64_t reply_stub[NL_DUMP_BUFSIZE / 8];
     struct ofpbuf request, reply, buf;
 
@@ -166,11 +166,10 @@ route_table_reset(void)
 
     ofpbuf_init(&request, 0);
 
-    nl_msg_put_nlmsghdr(&request, sizeof *rtgenmsg, RTM_GETROUTE,
-                        NLM_F_REQUEST);
+    nl_msg_put_nlmsghdr(&request, sizeof *rtmsg, RTM_GETROUTE, NLM_F_REQUEST);
 
-    rtgenmsg = ofpbuf_put_zeros(&request, sizeof *rtgenmsg);
-    rtgenmsg->rtgen_family = AF_UNSPEC;
+    rtmsg = ofpbuf_put_zeros(&request, sizeof *rtmsg);
+    rtmsg->rtgen_family = AF_UNSPEC;
 
     nl_dump_start(&dump, NETLINK_ROUTE, &request);
     ofpbuf_uninit(&request);

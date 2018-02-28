@@ -47,20 +47,11 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/meta-flow.h"
 #include "openvswitch/ofp-actions.h"
-#include "openvswitch/ofp-bundle.h"
 #include "openvswitch/ofp-errors.h"
-#include "openvswitch/ofp-group.h"
-#include "openvswitch/ofp-match.h"
-#include "openvswitch/ofp-meter.h"
 #include "openvswitch/ofp-msgs.h"
-#include "openvswitch/ofp-monitor.h"
-#include "openvswitch/ofp-port.h"
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofp-parse.h"
-#include "openvswitch/ofp-queue.h"
-#include "openvswitch/ofp-switch.h"
-#include "openvswitch/ofp-table.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/shash.h"
 #include "openvswitch/vconn.h"
@@ -153,9 +144,6 @@ static int show_stats = 1;
 /* --pcap: Makes "compose-packet" print a pcap on stdout. */
 static int print_pcap = 0;
 
-/* --raw: Makes "ofp-print" read binary data from stdin. */
-static int raw = 0;
-
 static const struct ovs_cmdl_command *get_all_commands(void);
 
 OVS_NO_RETURN static void usage(void);
@@ -242,7 +230,6 @@ parse_options(int argc, char *argv[])
         {"color", optional_argument, NULL, OPT_COLOR},
         {"may-create", no_argument, NULL, OPT_MAY_CREATE},
         {"pcap", no_argument, &print_pcap, 1},
-        {"raw", no_argument, &raw, 1},
         {"read-only", no_argument, NULL, OPT_READ_ONLY},
         DAEMON_LONG_OPTIONS,
         OFP_VERSION_LONG_OPTIONS,
@@ -653,17 +640,17 @@ dump_transaction(struct vconn *vconn, struct ofpbuf *request)
                 "OpenFlow packet receive failed");
             recv_xid = ((struct ofp_header *) reply->data)->xid;
             if (send_xid == recv_xid) {
-                enum ofpraw ofpraw;
+                enum ofpraw raw;
 
                 ofp_print(stdout, reply->data, reply->size,
                           ports_to_show(vconn_get_name(vconn)),
                           tables_to_show(vconn_get_name(vconn)),
                           verbosity + 1);
 
-                ofpraw_decode(&ofpraw, reply->data);
-                if (ofptype_from_ofpraw(ofpraw) == OFPTYPE_ERROR) {
+                ofpraw_decode(&raw, reply->data);
+                if (ofptype_from_ofpraw(raw) == OFPTYPE_ERROR) {
                     done = true;
-                } else if (ofpraw == reply_raw) {
+                } else if (raw == reply_raw) {
                     done = !ofpmp_more(reply->data);
                 } else {
                     ovs_fatal(0, "received bad reply: %s",
@@ -693,13 +680,13 @@ dump_transaction(struct vconn *vconn, struct ofpbuf *request)
 }
 
 static void
-dump_trivial_transaction(const char *vconn_name, enum ofpraw ofpraw)
+dump_trivial_transaction(const char *vconn_name, enum ofpraw raw)
 {
     struct ofpbuf *request;
     struct vconn *vconn;
 
     open_vconn(vconn_name, &vconn);
-    request = ofpraw_alloc(ofpraw, vconn_get_version(vconn), 0);
+    request = ofpraw_alloc(raw, vconn_get_version(vconn), 0);
     dump_transaction(vconn, request);
     vconn_close(vconn);
 }
@@ -1223,10 +1210,10 @@ table_iterator_init(struct table_iterator *ti, struct vconn *vconn)
                    ? TI_STATS : TI_FEATURES);
     ti->more = true;
 
-    enum ofpraw ofpraw = (ti->variant == TI_STATS
-                          ? OFPRAW_OFPST_TABLE_REQUEST
-                          : OFPRAW_OFPST13_TABLE_FEATURES_REQUEST);
-    struct ofpbuf *rq = ofpraw_alloc(ofpraw, vconn_get_version(vconn), 0);
+    enum ofpraw raw = (ti->variant == TI_STATS
+                       ? OFPRAW_OFPST_TABLE_REQUEST
+                       : OFPRAW_OFPST13_TABLE_FEATURES_REQUEST);
+    struct ofpbuf *rq = ofpraw_alloc(raw, vconn_get_version(vconn), 0);
     ti->send_xid = ((struct ofp_header *) rq->data)->xid;
     send_openflow_buffer(ti->vconn, rq);
 }
@@ -2165,7 +2152,7 @@ monitor_vconn(struct vconn *vconn, bool reply_to_echo_requests,
                 if (reply_to_echo_requests) {
                     struct ofpbuf *reply;
 
-                    reply = ofputil_encode_echo_reply(b->data);
+                    reply = make_echo_reply(b->data);
                     retval = vconn_send_block(vconn, reply);
                     if (retval) {
                         ovs_fatal(retval, "failed to send echo reply");
@@ -2363,7 +2350,7 @@ ofctl_probe(struct ovs_cmdl_context *ctx)
     struct ofpbuf *reply;
 
     open_vconn(ctx->argv[1], &vconn);
-    request = ofputil_encode_echo_request(vconn_get_version(vconn));
+    request = make_echo_request(vconn_get_version(vconn));
     run(vconn_transact(vconn, request, &reply), "talking to %s", ctx->argv[1]);
     if (reply->size != sizeof(struct ofp_header)) {
         ovs_fatal(0, "reply does not match request");
@@ -4633,49 +4620,43 @@ ofctl_encode_error_reply(struct ovs_cmdl_context *ctx)
     ofpbuf_delete(reply);
 }
 
-/* Usage:
- *    ofp-print HEXSTRING [VERBOSITY]
- *    ofp-print - [VERBOSITY] < HEXSTRING_FILE
- *    ofp-print --raw - [VERBOSITY] < RAW_FILE
+/* "ofp-print HEXSTRING [VERBOSITY]": Converts the hex digits in HEXSTRING into
+ * binary data, interpreting them as an OpenFlow message, and prints the
+ * OpenFlow message on stdout, at VERBOSITY (level 2 by default).
  *
- * Converts the hex digits in HEXSTRING into binary data, interpreting them as
- * an OpenFlow message, and prints the OpenFlow message on stdout, at VERBOSITY
- * (level 2 by default).  With -, hex data is read from HEXSTRING_FILE, and
- * with --raw -, raw binary data is read from RAW_FILE. */
+ * Alternative usage: "ofp-print [VERBOSITY] - < HEXSTRING_FILE", where
+ * HEXSTRING_FILE contains the HEXSTRING. */
 static void
 ofctl_ofp_print(struct ovs_cmdl_context *ctx)
 {
-    int verbosity_ = ctx->argc > 2 ? atoi(ctx->argv[2]) : 2;
-
     struct ofpbuf packet;
-    ofpbuf_init(&packet, 0);
+    char *buffer;
+    int verbosity = 2;
+    struct ds line;
 
-    char *buffer = NULL;
-    if (!strcmp(ctx->argv[1], "-")) {
-        if (raw) {
-            for (;;) {
-                int c = getchar();
-                if (c == EOF) {
-                    break;
-                }
-                ofpbuf_put(&packet, &c, 1);
-            }
-        } else {
-            struct ds line = DS_EMPTY_INITIALIZER;
-            if (ds_get_line(&line, stdin)) {
-                VLOG_FATAL("Failed to read stdin");
-            }
-            buffer = ds_steal_cstr(&line);
+    ds_init(&line);
+
+    if (!strcmp(ctx->argv[ctx->argc-1], "-")) {
+        if (ds_get_line(&line, stdin)) {
+           VLOG_FATAL("Failed to read stdin");
         }
-    } else  {
-        buffer = xstrdup(ctx->argv[1]);
+
+        buffer = line.string;
+        verbosity = ctx->argc > 2 ? atoi(ctx->argv[1]) : verbosity;
+    } else if (ctx->argc > 2) {
+        buffer = ctx->argv[1];
+        verbosity = atoi(ctx->argv[2]);
+    } else {
+        buffer = ctx->argv[1];
     }
-    if (buffer && ofpbuf_put_hex(&packet, buffer, NULL)[0] != '\0') {
+
+    ofpbuf_init(&packet, strlen(buffer) / 2);
+    if (ofpbuf_put_hex(&packet, buffer, NULL)[0] != '\0') {
         ovs_fatal(0, "trailing garbage following hex bytes");
     }
-    free(buffer);
-    ofp_print(stdout, packet.data, packet.size, NULL, NULL, verbosity_);
+    ofp_print(stdout, packet.data, packet.size, NULL, NULL, verbosity);
     ofpbuf_uninit(&packet);
+    ds_destroy(&line);
 }
 
 /* "encode-hello BITMAP...": Encodes each BITMAP as an OpenFlow hello message

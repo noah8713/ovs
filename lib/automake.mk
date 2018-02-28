@@ -131,7 +131,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/meta-flow.c \
 	lib/multipath.c \
 	lib/multipath.h \
-	lib/namemap.c \
 	lib/netdev-dpdk.h \
 	lib/netdev-dummy.c \
 	lib/netdev-provider.h \
@@ -152,26 +151,12 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/odp-util.c \
 	lib/odp-util.h \
 	lib/ofp-actions.c \
-	lib/ofp-bundle.c \
-	lib/ofp-connection.c \
 	lib/ofp-ed-props.c \
 	lib/ofp-errors.c \
-	lib/ofp-flow.c \
-	lib/ofp-group.c \
-	lib/ofp-ipfix.c \
-	lib/ofp-match.c \
-	lib/ofp-meter.c \
-	lib/ofp-monitor.c \
 	lib/ofp-msgs.c \
-	lib/ofp-packet.c \
 	lib/ofp-parse.c \
-	lib/ofp-port.c \
 	lib/ofp-print.c \
 	lib/ofp-prop.c \
-	lib/ofp-protocol.c \
-	lib/ofp-queue.c \
-	lib/ofp-switch.c \
-	lib/ofp-table.c \
 	lib/ofp-util.c \
 	lib/ofp-version-opt.h \
 	lib/ofp-version-opt.c \
@@ -214,6 +199,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/ovsdb-condition.c \
 	lib/ovsdb-parser.c \
 	lib/ovsdb-parser.h \
+	lib/ovsdb-session.c \
+	lib/ovsdb-session.h \
 	lib/ovsdb-types.c \
 	lib/ovsdb-types.h \
 	lib/packets.c \
@@ -342,6 +329,8 @@ EXTRA_DIST += \
 
 nodist_lib_libopenvswitch_la_SOURCES = \
 	lib/dirs.c \
+	lib/ovsdb-server-idl.c \
+	lib/ovsdb-server-idl.h \
 	lib/vswitch-idl.c \
 	lib/vswitch-idl.h
 CLEANFILES += $(nodist_lib_libopenvswitch_la_SOURCES)
@@ -559,6 +548,12 @@ lib/ofp-msgs.inc: include/openvswitch/ofp-msgs.h $(srcdir)/build-aux/extract-ofp
 lib/ofp-msgs.lo: lib/ofp-msgs.inc
 CLEANFILES += lib/ofp-msgs.inc
 EXTRA_DIST += build-aux/extract-ofp-msgs
+
+# _server IDL
+OVSIDL_BUILT += lib/ovsdb-server-idl.c lib/ovsdb-server-idl.h lib/ovsdb-server-idl.ovsidl
+EXTRA_DIST += lib/ovsdb-server-idl.ann
+lib/ovsdb-server-idl.ovsidl: ovsdb/_server.ovsschema lib/ovsdb-server-idl.ann
+	$(AM_V_GEN)$(OVSDB_IDLC) annotate $(srcdir)/ovsdb/_server.ovsschema $(srcdir)/lib/ovsdb-server-idl.ann > $@.tmp && mv $@.tmp $@
 
 INSTALL_DATA_LOCAL += lib-install-data-local
 lib-install-data-local:

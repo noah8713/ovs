@@ -2598,7 +2598,7 @@ OvsLookupFlow(OVS_DATAPATH *datapath,
             *hash = OvsJhashWords((UINT32*)hash, 1, key->ct.zone);
         }
         if (key->ct.mark) {
-            *hash = OvsJhashWords((UINT32*)hash, 1, key->ct.mark);
+            *hash = OvsJhashWords((UINT32*)hash, 1, key->ct.zone);
         }
         if (key->ct.labels.ct_labels) {
             UINT32 lblHash = OvsJhashBytes(&key->ct.labels,

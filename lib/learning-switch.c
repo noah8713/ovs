@@ -32,16 +32,11 @@
 #include "mac-learning.h"
 #include "openflow/openflow.h"
 #include "openvswitch/ofp-actions.h"
-#include "openvswitch/ofp-connection.h"
 #include "openvswitch/ofp-errors.h"
-#include "openvswitch/ofp-flow.h"
-#include "openvswitch/ofp-match.h"
 #include "openvswitch/ofp-msgs.h"
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/ofp-util.h"
-#include "openvswitch/ofp-packet.h"
-#include "openvswitch/ofp-port.h"
-#include "openvswitch/ofp-switch.h"
+#include "openvswitch/ofp-parse.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
@@ -618,7 +613,7 @@ process_packet_in(struct lswitch *sw, const struct ofp_header *oh)
 static void
 process_echo_request(struct lswitch *sw, const struct ofp_header *rq)
 {
-    queue_tx(sw, ofputil_encode_echo_reply(rq));
+    queue_tx(sw, make_echo_reply(rq));
 }
 
 static ofp_port_t

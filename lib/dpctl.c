@@ -49,8 +49,7 @@
 #include "timeval.h"
 #include "unixctl.h"
 #include "util.h"
-#include "openvswitch/ofp-flow.h"
-#include "openvswitch/ofp-port.h"
+#include "openvswitch/ofp-parse.h"
 #include "openvswitch/vlog.h"
 VLOG_DEFINE_THIS_MODULE(dpctl);
 

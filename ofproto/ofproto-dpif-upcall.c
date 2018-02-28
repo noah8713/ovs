@@ -534,15 +534,18 @@ udpif_stop_threads(struct udpif *udpif)
 /* Starts the handler and revalidator threads, must be enclosed in
  * ovsrcu quiescent state. */
 static void
-udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
-                    size_t n_revalidators_)
+udpif_start_threads(struct udpif *udpif, size_t n_handlers,
+                    size_t n_revalidators)
 {
-    if (udpif && n_handlers_ && n_revalidators_) {
-        udpif->n_handlers = n_handlers_;
-        udpif->n_revalidators = n_revalidators_;
+    if (udpif && n_handlers && n_revalidators) {
+        size_t i;
+        bool enable_ufid;
+
+        udpif->n_handlers = n_handlers;
+        udpif->n_revalidators = n_revalidators;
 
         udpif->handlers = xzalloc(udpif->n_handlers * sizeof *udpif->handlers);
-        for (size_t i = 0; i < udpif->n_handlers; i++) {
+        for (i = 0; i < udpif->n_handlers; i++) {
             struct handler *handler = &udpif->handlers[i];
 
             handler->udpif = udpif;
@@ -551,7 +554,8 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
                 "handler", udpif_upcall_handler, handler);
         }
 
-        atomic_init(&udpif->enable_ufid, udpif->backer->rt_support.ufid);
+        enable_ufid = udpif->backer->rt_support.ufid;
+        atomic_init(&udpif->enable_ufid, enable_ufid);
         dpif_enable_upcall(udpif->dpif);
 
         ovs_barrier_init(&udpif->reval_barrier, udpif->n_revalidators);
@@ -560,7 +564,7 @@ udpif_start_threads(struct udpif *udpif, size_t n_handlers_,
         udpif->pause = false;
         udpif->revalidators = xzalloc(udpif->n_revalidators
                                       * sizeof *udpif->revalidators);
-        for (size_t i = 0; i < udpif->n_revalidators; i++) {
+        for (i = 0; i < udpif->n_revalidators; i++) {
             struct revalidator *revalidator = &udpif->revalidators[i];
 
             revalidator->udpif = udpif;
@@ -594,33 +598,33 @@ udpif_resume_revalidators(struct udpif *udpif)
 }
 
 /* Tells 'udpif' how many threads it should use to handle upcalls.
- * 'n_handlers_' and 'n_revalidators_' can never be zero.  'udpif''s
+ * 'n_handlers' and 'n_revalidators' can never be zero.  'udpif''s
  * datapath handle must have packet reception enabled before starting
  * threads. */
 void
-udpif_set_threads(struct udpif *udpif, size_t n_handlers_,
-                  size_t n_revalidators_)
+udpif_set_threads(struct udpif *udpif, size_t n_handlers,
+                  size_t n_revalidators)
 {
     ovs_assert(udpif);
-    ovs_assert(n_handlers_ && n_revalidators_);
+    ovs_assert(n_handlers && n_revalidators);
 
     ovsrcu_quiesce_start();
-    if (udpif->n_handlers != n_handlers_
-        || udpif->n_revalidators != n_revalidators_) {
+    if (udpif->n_handlers != n_handlers
+        || udpif->n_revalidators != n_revalidators) {
         udpif_stop_threads(udpif);
     }
 
     if (!udpif->handlers && !udpif->revalidators) {
         int error;
 
-        error = dpif_handlers_set(udpif->dpif, n_handlers_);
+        error = dpif_handlers_set(udpif->dpif, n_handlers);
         if (error) {
             VLOG_ERR("failed to configure handlers in dpif %s: %s",
                      dpif_name(udpif->dpif), ovs_strerror(error));
             return;
         }
 
-        udpif_start_threads(udpif, n_handlers_, n_revalidators_);
+        udpif_start_threads(udpif, n_handlers, n_revalidators);
     }
     ovsrcu_quiesce_end();
 }
@@ -635,12 +639,12 @@ udpif_synchronize(struct udpif *udpif)
     /* This is stronger than necessary.  It would be sufficient to ensure
      * (somehow) that each handler and revalidator thread had passed through
      * its main loop once. */
-    size_t n_handlers_ = udpif->n_handlers;
-    size_t n_revalidators_ = udpif->n_revalidators;
+    size_t n_handlers = udpif->n_handlers;
+    size_t n_revalidators = udpif->n_revalidators;
 
     ovsrcu_quiesce_start();
     udpif_stop_threads(udpif);
-    udpif_start_threads(udpif, n_handlers_, n_revalidators_);
+    udpif_start_threads(udpif, n_handlers, n_revalidators);
     ovsrcu_quiesce_end();
 }
 
@@ -678,14 +682,16 @@ udpif_get_memory_usage(struct udpif *udpif, struct simap *usage)
 void
 udpif_flush(struct udpif *udpif)
 {
-    size_t n_handlers_ = udpif->n_handlers;
-    size_t n_revalidators_ = udpif->n_revalidators;
+    size_t n_handlers, n_revalidators;
+
+    n_handlers = udpif->n_handlers;
+    n_revalidators = udpif->n_revalidators;
 
     ovsrcu_quiesce_start();
 
     udpif_stop_threads(udpif);
     dpif_flow_flush(udpif->dpif);
-    udpif_start_threads(udpif, n_handlers_, n_revalidators_);
+    udpif_start_threads(udpif, n_handlers, n_revalidators);
 
     ovsrcu_quiesce_end();
 }
@@ -1246,6 +1252,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
           const struct nlattr *userdata, struct ofpbuf *actions,
           struct flow_wildcards *wc, struct ofpbuf *put_actions, void *aux)
 {
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
     struct udpif *udpif = aux;
     struct upcall upcall;
     bool megaflow;
@@ -1259,7 +1266,6 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
         return error;
     }
 
-    upcall.fitness = ODP_FIT_PERFECT;
     error = process_upcall(udpif, &upcall, actions, wc);
     if (error) {
         goto out;
@@ -1280,8 +1286,7 @@ upcall_cb(const struct dp_packet *packet, const struct flow *flow, ovs_u128 *ufi
     }
 
     if (upcall.ukey && !ukey_install(udpif, upcall.ukey)) {
-        static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 1);
-        VLOG_WARN_RL(&rll, "upcall_cb failure: ukey installation fails");
+        VLOG_WARN_RL(&rl, "upcall_cb failure: ukey installation fails");
         error = ENOSPC;
     }
 out:
@@ -2349,8 +2354,9 @@ push_dp_ops(struct udpif *udpif, struct ukey_op *ops, size_t n_ops)
 
             error = xlate_key(udpif, key, key_len, push, &ctx);
             if (error) {
-                static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 5);
-                VLOG_WARN_RL(&rll, "xlate_key failed (%s)!",
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+
+                VLOG_WARN_RL(&rl, "xlate_key failed (%s)!",
                              ovs_strerror(error));
             } else {
                 xlate_out_uninit(&ctx.xout);
@@ -2383,15 +2389,13 @@ push_ukey_ops(struct udpif *udpif, struct umap *umap,
 static void
 log_unexpected_flow(const struct dpif_flow *flow, int error)
 {
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 60);
     struct ds ds = DS_EMPTY_INITIALIZER;
 
     ds_put_format(&ds, "Failed to acquire udpif_key corresponding to "
                   "unexpected flow (%s): ", ovs_strerror(error));
     odp_format_ufid(&flow->ufid, &ds);
-
-    static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(10, 60);
-    VLOG_WARN_RL(&rll, "%s", ds_cstr(&ds));
-
+    VLOG_WARN_RL(&rl, "%s", ds_cstr(&ds));
     ds_destroy(&ds);
 }
 

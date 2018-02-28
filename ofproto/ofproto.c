@@ -41,13 +41,9 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/meta-flow.h"
 #include "openvswitch/ofp-actions.h"
-#include "openvswitch/ofp-bundle.h"
 #include "openvswitch/ofp-errors.h"
-#include "openvswitch/ofp-match.h"
 #include "openvswitch/ofp-msgs.h"
-#include "openvswitch/ofp-monitor.h"
 #include "openvswitch/ofp-print.h"
-#include "openvswitch/ofp-queue.h"
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
@@ -1966,18 +1962,27 @@ ofproto_port_dump_done(struct ofproto_port_dump *dump)
     return dump->error == EOF ? 0 : dump->error;
 }
 
-/* Returns the type to pass to netdev_open() when 'ofproto' has a port of type
- * 'port_type', for a few special cases when a netdev type differs from a port
- * type.  For example, when using the userspace datapath, a port of type
- * "internal" needs to be opened as "tap".
+/* Returns the type to pass to netdev_open() when a datapath of type
+ * 'datapath_type' has a port of type 'port_type', for a few special
+ * cases when a netdev type differs from a port type.  For example, when
+ * using the userspace datapath, a port of type "internal" needs to be
+ * opened as "tap".
  *
  * Returns either 'type' itself or a string literal, which must not be
  * freed. */
 const char *
-ofproto_port_open_type(const struct ofproto *ofproto, const char *port_type)
+ofproto_port_open_type(const char *datapath_type, const char *port_type)
 {
-    return (ofproto->ofproto_class->port_open_type
-            ? ofproto->ofproto_class->port_open_type(ofproto->type, port_type)
+    const struct ofproto_class *class;
+
+    datapath_type = ofproto_normalize_type(datapath_type);
+    class = ofproto_class_find__(datapath_type);
+    if (!class) {
+        return port_type;
+    }
+
+    return (class->port_open_type
+            ? class->port_open_type(datapath_type, port_type)
             : port_type);
 }
 
@@ -2719,9 +2724,10 @@ init_ports(struct ofproto *p)
 static bool
 ofport_is_internal_or_patch(const struct ofproto *p, const struct ofport *port)
 {
-    const char *netdev_type = netdev_get_type(port->netdev);
-    return !strcmp(netdev_type, ofproto_port_open_type(p, "internal")) ||
-           !strcmp(netdev_type, ofproto_port_open_type(p, "patch"));
+    return !strcmp(netdev_get_type(port->netdev),
+                   ofproto_port_open_type(p->type, "internal")) ||
+           !strcmp(netdev_get_type(port->netdev),
+                   ofproto_port_open_type(p->type, "patch"));
 }
 
 /* If 'port' is internal or patch and if the user didn't explicitly specify an
@@ -3193,7 +3199,7 @@ learned_cookies_flush(struct ofproto *ofproto, struct ovs_list *dead_cookies)
 static enum ofperr
 handle_echo_request(struct ofconn *ofconn, const struct ofp_header *oh)
 {
-    ofconn_send_reply(ofconn, ofputil_encode_echo_reply(oh));
+    ofconn_send_reply(ofconn, make_echo_reply(oh));
     return 0;
 }
 
@@ -5131,8 +5137,8 @@ ofproto_flow_mod_learn(struct ofproto_flow_mod *ofm, bool keep_ref,
                 ofproto_flow_mod_learn_finish(ofm, NULL);
             }
         } else {
-            static struct vlog_rate_limit rll = VLOG_RATE_LIMIT_INIT(1, 5);
-            VLOG_INFO_RL(&rll, "Learn limit for flow %"PRIu64" reached.",
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+            VLOG_INFO_RL(&rl, "Learn limit for flow %"PRIu64" reached.",
                          rule->flow_cookie);
 
             ofproto_flow_mod_uninit(ofm);

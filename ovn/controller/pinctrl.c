@@ -31,9 +31,7 @@
 #include "lib/sset.h"
 #include "openvswitch/ofp-actions.h"
 #include "openvswitch/ofp-msgs.h"
-#include "openvswitch/ofp-packet.h"
 #include "openvswitch/ofp-print.h"
-#include "openvswitch/ofp-switch.h"
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/vlog.h"
 
@@ -119,9 +117,9 @@ queue_msg(struct ofpbuf *msg)
     return xid;
 }
 
-/* Sets up global 'swconn', a newly (re)connected connection to a switch. */
+/* Sets up 'swconn', a newly (re)connected connection to a switch. */
 static void
-pinctrl_setup(void)
+pinctrl_setup(struct rconn *swconn)
 {
     /* Fetch the switch configuration.  The response later will allow us to
      * change the miss_send_len to UINT16_MAX, so that we can enable
@@ -135,10 +133,10 @@ pinctrl_setup(void)
 }
 
 static void
-set_switch_config(struct rconn *swconn_,
+set_switch_config(struct rconn *swconn,
                   const struct ofputil_switch_config *config)
 {
-    enum ofp_version version = rconn_get_version(swconn_);
+    enum ofp_version version = rconn_get_version(swconn);
     struct ofpbuf *request = ofputil_encode_set_config(config, version);
     queue_msg(request);
 }
@@ -918,18 +916,11 @@ pinctrl_handle_dns_lookup(
     out_udp->udp_len = htons(new_l4_size);
     out_udp->udp_csum = 0;
 
-    struct eth_header *eth = dp_packet_data(&pkt_out);
-    if (eth->eth_type == htons(ETH_TYPE_IP)) {
-        struct ip_header *out_ip = dp_packet_l3(&pkt_out);
-        out_ip->ip_tot_len = htons(pkt_out.l4_ofs - pkt_out.l3_ofs
-                                   + new_l4_size);
-        /* Checksum needs to be initialized to zero. */
-        out_ip->ip_csum = 0;
-        out_ip->ip_csum = csum(out_ip, sizeof *out_ip);
-    } else {
-        struct ovs_16aligned_ip6_hdr *nh = dp_packet_l3(&pkt_out);
-        nh->ip6_plen = htons(new_l4_size);
-    }
+    struct ip_header *out_ip = dp_packet_l3(&pkt_out);
+    out_ip->ip_tot_len = htons(pkt_out.l4_ofs - pkt_out.l3_ofs + new_l4_size);
+    /* Checksum needs to be initialized to zero. */
+    out_ip->ip_csum = 0;
+    out_ip->ip_csum = csum(out_ip, sizeof *out_ip);
 
     pin->packet = dp_packet_data(&pkt_out);
     pin->packet_len = dp_packet_size(&pkt_out);
@@ -1034,7 +1025,7 @@ pinctrl_recv(const struct ofp_header *oh, enum ofptype type,
              struct controller_ctx *ctx)
 {
     if (type == OFPTYPE_ECHO_REQUEST) {
-        queue_msg(ofputil_encode_echo_reply(oh));
+        queue_msg(make_echo_reply(oh));
     } else if (type == OFPTYPE_GET_CONFIG_REPLY) {
         /* Enable asynchronous messages */
         struct ofputil_switch_config config;
@@ -1073,29 +1064,27 @@ pinctrl_run(struct controller_ctx *ctx,
 
     rconn_run(swconn);
 
-    if (!rconn_is_connected(swconn)) {
-        return;
-    }
-
-    if (conn_seq_no != rconn_get_connection_seqno(swconn)) {
-        pinctrl_setup();
-        conn_seq_no = rconn_get_connection_seqno(swconn);
-        flush_put_mac_bindings();
-    }
-
-    /* Process a limited number of messages per call. */
-    for (int i = 0; i < 50; i++) {
-        struct ofpbuf *msg = rconn_recv(swconn);
-        if (!msg) {
-            break;
+    if (rconn_is_connected(swconn)) {
+        if (conn_seq_no != rconn_get_connection_seqno(swconn)) {
+            pinctrl_setup(swconn);
+            conn_seq_no = rconn_get_connection_seqno(swconn);
+            flush_put_mac_bindings();
         }
 
-        const struct ofp_header *oh = msg->data;
-        enum ofptype type;
+        /* Process a limited number of messages per call. */
+        for (int i = 0; i < 50; i++) {
+            struct ofpbuf *msg = rconn_recv(swconn);
+            if (!msg) {
+                break;
+            }
 
-        ofptype_decode(&type, oh);
-        pinctrl_recv(oh, type, ctx);
-        ofpbuf_delete(msg);
+            const struct ofp_header *oh = msg->data;
+            enum ofptype type;
+
+            ofptype_decode(&type, oh);
+            pinctrl_recv(oh, type, ctx);
+            ofpbuf_delete(msg);
+        }
     }
 
     run_put_mac_bindings(ctx);

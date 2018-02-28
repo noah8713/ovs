@@ -45,6 +45,7 @@
 #include "openvswitch/list.h"
 #include "openvswitch/meta-flow.h"
 #include "openvswitch/ofp-print.h"
+#include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
 #include "ovs-lldp.h"
@@ -88,6 +89,7 @@ struct iface {
 
     /* These members are valid only within bridge_reconfigure(). */
     const char *type;           /* Usually same as cfg->type. */
+    const char *netdev_type;    /* type that should be used for netdev_open. */
     const struct ovsrec_interface *cfg;
 };
 
@@ -821,9 +823,7 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
             goto delete;
         }
 
-        const char *netdev_type = ofproto_port_open_type(br->ofproto,
-                                                         iface->type);
-        if (strcmp(ofproto_port.type, netdev_type)
+        if (strcmp(ofproto_port.type, iface->netdev_type)
             || netdev_set_config(iface->netdev, &iface->cfg->options, NULL)) {
             /* The interface is the wrong type or can't be configured.
              * Delete it. */
@@ -1779,7 +1779,7 @@ iface_do_create(const struct bridge *br,
         goto error;
     }
 
-    type = ofproto_port_open_type(br->ofproto,
+    type = ofproto_port_open_type(br->cfg->datapath_type,
                                   iface_get_type(iface_cfg, br->cfg));
     error = netdev_open(iface_cfg->name, type, &netdev);
     if (error) {
@@ -1857,6 +1857,8 @@ iface_create(struct bridge *br, const struct ovsrec_interface *iface_cfg,
     iface->ofp_port = ofp_port;
     iface->netdev = netdev;
     iface->type = iface_get_type(iface_cfg, br->cfg);
+    iface->netdev_type = ofproto_port_open_type(br->cfg->datapath_type,
+                                                iface->type);
     iface->cfg = iface_cfg;
     hmap_insert(&br->ifaces, &iface->ofp_port_node,
                 hash_ofp_port(ofp_port));
@@ -3444,10 +3446,13 @@ bridge_del_ports(struct bridge *br, const struct shash *wanted_ports)
             const struct ovsrec_interface *cfg = port_rec->interfaces[i];
             struct iface *iface = iface_lookup(br, cfg->name);
             const char *type = iface_get_type(cfg, br->cfg);
+            const char *dp_type = br->cfg->datapath_type;
+            const char *netdev_type = ofproto_port_open_type(dp_type, type);
 
             if (iface) {
                 iface->cfg = cfg;
                 iface->type = type;
+                iface->netdev_type = netdev_type;
             } else if (!strcmp(type, "null")) {
                 VLOG_WARN_ONCE("%s: The null interface type is deprecated and"
                                " may be removed in February 2013. Please email"

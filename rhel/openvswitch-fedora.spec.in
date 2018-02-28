@@ -239,7 +239,9 @@ build-aux/dpdkstrip.py \
 	> rhel/usr_lib_systemd_system_ovs-vswitchd.service
 
 make %{?_smp_mflags}
-make selinux-policy
+make selinux/openvswitch-custom.te
+cd selinux
+make -f %{_datadir}/selinux/devel/Makefile
 
 %install
 rm -rf $RPM_BUILD_ROOT
@@ -562,6 +564,7 @@ fi
 %{_mandir}/man1/ovsdb-client.1*
 %{_mandir}/man1/ovsdb-server.1*
 %{_mandir}/man1/ovsdb-tool.1*
+%{_mandir}/man5/ovsdb-server.5*
 %{_mandir}/man5/ovs-vswitchd.conf.db.5*
 %{_mandir}/man5/ovsdb.5*
 %{_mandir}/man5/vtep.5*

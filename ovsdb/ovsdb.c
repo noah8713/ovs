@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013, 2017 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,20 @@
 #include "ovsdb.h"
 
 #include "column.h"
+#include "file.h"
+#include "monitor.h"
 #include "openvswitch/json.h"
 #include "ovsdb-error.h"
 #include "ovsdb-parser.h"
 #include "ovsdb-types.h"
 #include "simap.h"
+#include "storage.h"
 #include "table.h"
 #include "transaction.h"
+#include "trigger.h"
+
+#include "openvswitch/vlog.h"
+VLOG_DEFINE_THIS_MODULE(ovsdb);
 
 struct ovsdb_schema *
 ovsdb_schema_create(const char *name, const char *version, const char *cksum)
@@ -160,7 +167,7 @@ root_set_size(const struct ovsdb_schema *schema)
 }
 
 struct ovsdb_error *
-ovsdb_schema_from_json(struct json *json, struct ovsdb_schema **schemap)
+ovsdb_schema_from_json(const struct json *json, struct ovsdb_schema **schemap)
 {
     struct ovsdb_schema *schema;
     const struct json *name, *tables, *version_json, *cksum;
@@ -307,6 +314,61 @@ ovsdb_schema_equal(const struct ovsdb_schema *a,
 
     return equals;
 }
+
+struct ovsdb_error * OVS_WARN_UNUSED_RESULT
+ovsdb_schema_check_for_ephemeral_columns(const struct ovsdb_schema *schema)
+{
+    struct shash_node *node;
+    SHASH_FOR_EACH (node, &schema->tables) {
+        struct ovsdb_table_schema *table = node->data;
+        struct shash_node *node2;
+
+        SHASH_FOR_EACH (node2, &table->columns) {
+            struct ovsdb_column *column = node2->data;
+
+            if (column->index >= OVSDB_N_STD_COLUMNS && !column->persistent) {
+                return ovsdb_syntax_error(
+                    NULL, NULL, "Table %s column %s is ephemeral but "
+                    "clustered databases do not support ephemeral columns.",
+                    table->name, column->name);
+            }
+        }
+    }
+    return NULL;
+}
+
+void
+ovsdb_schema_persist_ephemeral_columns(struct ovsdb_schema *schema,
+                                       const char *filename)
+{
+    int n = 0;
+    const char *example_table = NULL;
+    const char *example_column = NULL;
+
+    struct shash_node *node;
+    SHASH_FOR_EACH (node, &schema->tables) {
+        struct ovsdb_table_schema *table = node->data;
+        struct shash_node *node2;
+
+        SHASH_FOR_EACH (node2, &table->columns) {
+            struct ovsdb_column *column = node2->data;
+
+            if (column->index >= OVSDB_N_STD_COLUMNS && !column->persistent) {
+                column->persistent = true;
+                example_table = table->name;
+                example_column = column->name;
+                n++;
+            }
+        }
+    }
+
+    if (n) {
+        VLOG_WARN("%s: changed %d columns in '%s' database from ephemeral to "
+                  "persistent, including '%s' column in '%s' table, because "
+                  "clusters do not support ephemeral columns",
+                  filename, n, schema->name, example_column, example_table);
+    }
+}
 
 static void
 ovsdb_set_ref_table(const struct shash *tables,
@@ -320,34 +382,41 @@ ovsdb_set_ref_table(const struct shash *tables,
     }
 }
 
+/* XXX add prereq parameter? */
 struct ovsdb *
-ovsdb_create(struct ovsdb_schema *schema)
+ovsdb_create(struct ovsdb_schema *schema, struct ovsdb_storage *storage)
 {
     struct shash_node *node;
     struct ovsdb *db;
 
-    db = xmalloc(sizeof *db);
+    db = xzalloc(sizeof *db);
+    db->name = xstrdup(schema
+                       ? schema->name
+                       : ovsdb_storage_get_name(storage));
     db->schema = schema;
-    ovs_list_init(&db->replicas);
+    db->storage = storage;
+    ovs_list_init(&db->monitors);
     ovs_list_init(&db->triggers);
     db->run_triggers = false;
 
     shash_init(&db->tables);
-    SHASH_FOR_EACH (node, &schema->tables) {
-        struct ovsdb_table_schema *ts = node->data;
-        shash_add(&db->tables, node->name, ovsdb_table_create(ts));
-    }
+    if (schema) {
+        SHASH_FOR_EACH (node, &schema->tables) {
+            struct ovsdb_table_schema *ts = node->data;
+            shash_add(&db->tables, node->name, ovsdb_table_create(ts));
+        }
 
-    /* Set all the refTables. */
-    SHASH_FOR_EACH (node, &schema->tables) {
-        struct ovsdb_table_schema *table = node->data;
-        struct shash_node *node2;
+        /* Set all the refTables. */
+        SHASH_FOR_EACH (node, &schema->tables) {
+            struct ovsdb_table_schema *table = node->data;
+            struct shash_node *node2;
 
-        SHASH_FOR_EACH (node2, &table->columns) {
-            struct ovsdb_column *column = node2->data;
+            SHASH_FOR_EACH (node2, &table->columns) {
+                struct ovsdb_column *column = node2->data;
 
-            ovsdb_set_ref_table(&db->tables, &column->type.key);
-            ovsdb_set_ref_table(&db->tables, &column->type.value);
+                ovsdb_set_ref_table(&db->tables, &column->type.key);
+                ovsdb_set_ref_table(&db->tables, &column->type.value);
+            }
         }
     }
 
@@ -363,13 +432,11 @@ ovsdb_destroy(struct ovsdb *db)
     if (db) {
         struct shash_node *node;
 
-        /* Remove all the replicas. */
-        while (!ovs_list_is_empty(&db->replicas)) {
-            struct ovsdb_replica *r
-                = CONTAINER_OF(ovs_list_pop_back(&db->replicas),
-                               struct ovsdb_replica, node);
-            ovsdb_remove_replica(db, r);
-        }
+        /* Close the log. */
+        ovsdb_storage_close(db->storage);
+
+        /* Remove all the monitors. */
+        ovsdb_monitors_remove(db);
 
         /* Delete all the tables.  This also deletes their schemas. */
         SHASH_FOR_EACH (node, &db->tables) {
@@ -381,9 +448,12 @@ ovsdb_destroy(struct ovsdb *db)
         /* The schemas, but not the table that points to them, were deleted in
          * the previous step, so we need to clear out the table.  We can't
          * destroy the table, because ovsdb_schema_destroy() will do that. */
-        shash_clear(&db->schema->tables);
+        if (db->schema) {
+            shash_clear(&db->schema->tables);
+            ovsdb_schema_destroy(db->schema);
+        }
 
-        ovsdb_schema_destroy(db->schema);
+        free(db->name);
         free(db);
     }
 }
@@ -393,6 +463,10 @@ ovsdb_destroy(struct ovsdb *db)
 void
 ovsdb_get_memory_usage(const struct ovsdb *db, struct simap *usage)
 {
+    if (!db->schema) {
+        return;
+    }
+
     const struct shash_node *node;
     unsigned int cells = 0;
 
@@ -412,23 +486,42 @@ ovsdb_get_table(const struct ovsdb *db, const char *name)
 {
     return shash_find_data(&db->tables, name);
 }
-
-void
-ovsdb_replica_init(struct ovsdb_replica *r,
-                   const struct ovsdb_replica_class *class)
+
+struct ovsdb_error * OVS_WARN_UNUSED_RESULT
+ovsdb_snapshot(struct ovsdb *db)
 {
-    r->class = class;
+    if (!db->storage) {
+        return NULL;
+    }
+
+    struct json *schema = ovsdb_schema_to_json(db->schema);
+    struct json *data = ovsdb_to_txn_json(db, "compacting database online");
+    struct ovsdb_error *error = ovsdb_storage_store_snapshot(db->storage,
+                                                             schema, data);
+    json_destroy(schema);
+    json_destroy(data);
+    return error;
 }
 
 void
-ovsdb_add_replica(struct ovsdb *db, struct ovsdb_replica *r)
+ovsdb_replace(struct ovsdb *dst, struct ovsdb *src)
 {
-    ovs_list_push_back(&db->replicas, &r->node);
-}
+    /* Cancel monitors. */
+    ovsdb_monitor_prereplace_db(dst);
 
-void
-ovsdb_remove_replica(struct ovsdb *db OVS_UNUSED, struct ovsdb_replica *r)
-{
-    ovs_list_remove(&r->node);
-    (r->class->destroy)(r);
+    /* Cancel triggers. */
+    struct ovsdb_trigger *trigger, *next;
+    LIST_FOR_EACH_SAFE (trigger, next, node, &dst->triggers) {
+        ovsdb_trigger_prereplace_db(trigger);
+    }
+
+    struct ovsdb_schema *tmp_schema = dst->schema;
+    dst->schema = src->schema;
+    src->schema = tmp_schema;
+
+    shash_swap(&dst->tables, &src->tables);
+
+    dst->rbac_role = ovsdb_get_table(dst, "RBAC_Role");
+
+    ovsdb_destroy(src);
 }

@@ -28,12 +28,8 @@
 #include "openvswitch/list.h"
 #include "openvswitch/match.h"
 #include "openvswitch/ofp-actions.h"
-#include "openvswitch/ofp-flow.h"
-#include "openvswitch/ofp-group.h"
-#include "openvswitch/ofp-match.h"
 #include "openvswitch/ofp-msgs.h"
-#include "openvswitch/ofp-meter.h"
-#include "openvswitch/ofp-packet.h"
+#include "openvswitch/ofp-parse.h"
 #include "openvswitch/ofp-print.h"
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
@@ -587,9 +583,9 @@ static ovs_be32
 queue_msg(struct ofpbuf *msg)
 {
     const struct ofp_header *oh = msg->data;
-    ovs_be32 xid_ = oh->xid;
+    ovs_be32 xid = oh->xid;
     rconn_send(swconn, msg, tx_counter);
-    return xid_;
+    return xid;
 }
 
 static void
@@ -607,7 +603,7 @@ static void
 ofctrl_recv(const struct ofp_header *oh, enum ofptype type)
 {
     if (type == OFPTYPE_ECHO_REQUEST) {
-        queue_msg(ofputil_encode_echo_reply(oh));
+        queue_msg(make_echo_reply(oh));
     } else if (type == OFPTYPE_ERROR) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(30, 300);
         log_openflow_rl(&rl, VLL_INFO, oh, "OpenFlow error");
@@ -1038,7 +1034,7 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
         /* Add a barrier to the list of messages. */
         struct ofpbuf *barrier = ofputil_encode_barrier_request(OFP13_VERSION);
         const struct ofp_header *oh = barrier->data;
-        ovs_be32 xid_ = oh->xid;
+        ovs_be32 xid = oh->xid;
         ovs_list_push_back(&msgs, &barrier->list_node);
 
         /* Queue the messages. */
@@ -1051,7 +1047,7 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
         SHASH_FOR_EACH(iter, pending_ct_zones) {
             struct ct_zone_pending_entry *ctzpe = iter->data;
             if (ctzpe->state == CT_ZONE_OF_SENT && !ctzpe->of_xid) {
-                ctzpe->of_xid = xid_;
+                ctzpe->of_xid = xid;
             }
         }
 
@@ -1076,7 +1072,7 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
                  * so that we don't send a notification that we're up-to-date
                  * until we're really caught up. */
                 VLOG_DBG("advanced xid target for nb_cfg=%"PRId64, nb_cfg);
-                fup->xid = xid_;
+                fup->xid = xid;
                 goto done;
             } else {
                 break;
@@ -1086,7 +1082,7 @@ ofctrl_put(struct hmap *flow_table, struct shash *pending_ct_zones,
         /* Add a flow update. */
         fup = xmalloc(sizeof *fup);
         ovs_list_push_back(&flow_updates, &fup->list_node);
-        fup->xid = xid_;
+        fup->xid = xid;
         fup->nb_cfg = nb_cfg;
     done:;
     } else if (!ovs_list_is_empty(&flow_updates)) {

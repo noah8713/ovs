@@ -21,6 +21,7 @@
 #include "conntrack.h"
 #include "dpif.h"
 #include "ofproto-dpif-xlate.h"
+#include "openvswitch/ofp-parse.h"
 #include "unixctl.h"
 
 static void ofproto_trace(struct ofproto_dpif *, const struct flow *,

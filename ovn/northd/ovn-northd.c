@@ -194,13 +194,6 @@ ovn_stage_get_pipeline(enum ovn_stage stage)
     return (stage >> 8) & 1;
 }
 
-/* Returns the pipeline name to which 'stage' belongs. */
-static const char *
-ovn_stage_get_pipeline_name(enum ovn_stage stage)
-{
-    return ovn_stage_get_pipeline(stage) == P_IN ? "ingress" : "egress";
-}
-
 /* Returns the table to which 'stage' belongs. */
 static uint8_t
 ovn_stage_get_table(enum ovn_stage stage)
@@ -440,10 +433,10 @@ struct macam_node {
 };
 
 static void
-cleanup_macam(struct hmap *macam_)
+cleanup_macam(struct hmap *macam)
 {
     struct macam_node *node;
-    HMAP_FOR_EACH_POP (node, hmap_node, macam_) {
+    HMAP_FOR_EACH_POP (node, hmap_node, macam) {
         free(node);
     }
 }
@@ -2278,11 +2271,10 @@ struct ovn_lflow {
 static size_t
 ovn_lflow_hash(const struct ovn_lflow *lflow)
 {
-    return ovn_logical_flow_hash(&lflow->od->sb->header_.uuid,
-                                 ovn_stage_get_table(lflow->stage),
-                                 ovn_stage_get_pipeline_name(lflow->stage),
-                                 lflow->priority, lflow->match,
-                                 lflow->actions);
+    size_t hash = uuid_hash(&lflow->od->key);
+    hash = hash_2words((lflow->stage << 16) | lflow->priority, hash);
+    hash = hash_string(lflow->match, hash);
+    return hash_string(lflow->actions, hash);
 }
 
 static bool
@@ -2339,7 +2331,7 @@ ovn_lflow_add_at(struct hmap *lflow_map, struct ovn_datapath *od,
 static struct ovn_lflow *
 ovn_lflow_find(struct hmap *lflows, struct ovn_datapath *od,
                enum ovn_stage stage, uint16_t priority,
-               const char *match, const char *actions, uint32_t hash)
+               const char *match, const char *actions)
 {
     struct ovn_lflow target;
     ovn_lflow_init(&target, od, stage, priority,
@@ -2347,7 +2339,8 @@ ovn_lflow_find(struct hmap *lflows, struct ovn_datapath *od,
                    NULL, NULL);
 
     struct ovn_lflow *lflow;
-    HMAP_FOR_EACH_WITH_HASH (lflow, hmap_node, hash, lflows) {
+    HMAP_FOR_EACH_WITH_HASH (lflow, hmap_node, ovn_lflow_hash(&target),
+                             lflows) {
         if (ovn_lflow_equal(lflow, &target)) {
             return lflow;
         }
@@ -4463,9 +4456,9 @@ add_router_lb_flow(struct hmap *lflows, struct ovn_datapath *od,
     while (ip_str && ip_str[0]) {
         char *ip_address = NULL;
         uint16_t port = 0;
-        int addr_family_;
+        int addr_family;
         ip_address_and_port_from_lb_key(ip_str, &ip_address, &port,
-                                        &addr_family_);
+                                        &addr_family);
         if (!ip_address) {
             break;
         }
@@ -6021,7 +6014,7 @@ build_lflows(struct northd_context *ctx, struct hmap *datapaths,
             = !strcmp(sbflow->pipeline, "ingress") ? P_IN : P_OUT;
         struct ovn_lflow *lflow = ovn_lflow_find(
             &lflows, od, ovn_stage_build(dp_type, pipeline, sbflow->table_id),
-            sbflow->priority, sbflow->match, sbflow->actions, sbflow->hash);
+            sbflow->priority, sbflow->match, sbflow->actions);
         if (lflow) {
             ovn_lflow_destroy(&lflows, lflow);
         } else {
@@ -6030,12 +6023,13 @@ build_lflows(struct northd_context *ctx, struct hmap *datapaths,
     }
     struct ovn_lflow *lflow, *next_lflow;
     HMAP_FOR_EACH_SAFE (lflow, next_lflow, hmap_node, &lflows) {
-        const char *pipeline = ovn_stage_get_pipeline_name(lflow->stage);
+        enum ovn_pipeline pipeline = ovn_stage_get_pipeline(lflow->stage);
         uint8_t table = ovn_stage_get_table(lflow->stage);
 
         sbflow = sbrec_logical_flow_insert(ctx->ovnsb_txn);
         sbrec_logical_flow_set_logical_datapath(sbflow, lflow->od->sb);
-        sbrec_logical_flow_set_pipeline(sbflow, pipeline);
+        sbrec_logical_flow_set_pipeline(
+            sbflow, pipeline == P_IN ? "ingress" : "egress");
         sbrec_logical_flow_set_table_id(sbflow, table);
         sbrec_logical_flow_set_priority(sbflow, lflow->priority);
         sbrec_logical_flow_set_match(sbflow, lflow->match);

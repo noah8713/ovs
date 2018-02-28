@@ -27,8 +27,7 @@ openvswitch_sources = \
 	vport.c \
 	vport-internal_dev.c \
 	vport-netdev.c \
-	nsh.c \
-	meter.c
+	nsh.c
 
 vport_geneve_sources = vport-geneve.c
 vport_vxlan_sources = vport-vxlan.c
@@ -46,8 +45,7 @@ openvswitch_headers = \
 	flow_table.h \
 	vport.h \
 	vport-internal_dev.h \
-	vport-netdev.h \
-	meter.h
+	vport-netdev.h
 
 dist_sources = $(foreach module,$(dist_modules),$($(module)_sources))
 dist_headers = $(foreach module,$(dist_modules),$($(module)_headers))

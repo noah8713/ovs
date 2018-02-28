@@ -19,7 +19,7 @@
  *
  * ofproto-dpif provides an ofproto implementation for those platforms which
  * implement the netdev and dpif interface defined in netdev.h and dpif.h.  The
- * most important of which is the Linux Kernel Module (dpif-netlink), but
+ * most important of which is the Linux Kernel Module (dpif-linux), but
  * alternatives are supported such as a userspace only implementation
  * (dpif-netdev), and a dummy implementation used for unit testing.
  *
@@ -50,6 +50,7 @@
 #include "fail-open.h"
 #include "hmapx.h"
 #include "odp-util.h"
+#include "openvswitch/ofp-util.h"
 #include "id-pool.h"
 #include "ovs-thread.h"
 #include "ofproto-provider.h"
