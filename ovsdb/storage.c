@@ -490,38 +490,8 @@ schedule_next_snapshot(struct ovsdb_storage *storage, bool quick)
 }
 
 bool
-ovsdb_storage_should_snapshot(const struct ovsdb_storage *storage)
+ovsdb_storage_should_snapshot(const struct ovsdb_storage *storage OVS_UNUSED)
 {
-    if (storage->raft || storage->log) {
-        /* If we haven't reached the minimum snapshot time, don't snapshot. */
-        long long int now = time_msec();
-        if (now < storage->next_snapshot_min) {
-            return false;
-        }
-
-        /* If we can't snapshot right now, don't. */
-        if (storage->raft && !raft_may_snapshot(storage->raft)) {
-            return false;
-        }
-
-        uint64_t log_len = (storage->raft
-                            ? raft_get_log_length(storage->raft)
-                            : storage->n_read + storage->n_written);
-        if (now < storage->next_snapshot_max) {
-            /* Maximum snapshot time not yet reached.  Take a snapshot if there
-             * have been at least 100 log entries and the log file size has
-             * grown a lot. */
-            bool grew_lots = (storage->raft
-                              ? raft_grew_lots(storage->raft)
-                              : ovsdb_log_grew_lots(storage->log));
-            return log_len >= 100 && grew_lots;
-        } else {
-            /* We have reached the maximum snapshot time.  Take a snapshot if
-             * there have been any log entries at all. */
-            return log_len > 0;
-        }
-    }
-
     return false;
 }
 
