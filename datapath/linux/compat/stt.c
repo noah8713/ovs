@@ -564,12 +564,6 @@ static int __try_to_segment(struct sk_buff *skb, bool csum_partial,
 
 static int try_to_segment(struct sk_buff *skb)
 {
-#ifdef SKIP_ZERO_COPY
-	/* coalesce_skb() since does not generate frag-list no need to
-	 * linearize it here.
-	 */
-	return 0;
-#else
 	struct stthdr *stth = stt_hdr(skb);
 	bool csum_partial = !!(stth->flags & STT_CSUM_PARTIAL);
 	bool ipv4 = !!(stth->flags & STT_PROTO_IPV4);
@@ -577,7 +571,6 @@ static int try_to_segment(struct sk_buff *skb)
 	int l4_offset = stth->l4_offset;
 
 	return __try_to_segment(skb, csum_partial, ipv4, tcp, l4_offset);
-#endif
 }
 
 static int segment_skb(struct sk_buff **headp, bool csum_partial,
@@ -1857,7 +1850,12 @@ static const struct net_device_ops stt_netdev_ops = {
 	.ndo_stop               = stt_stop,
 	.ndo_start_xmit         = stt_dev_xmit,
 	.ndo_get_stats64        = ip_tunnel_get_stats64,
+#ifdef  HAVE_RHEL7_MAX_MTU
+	.ndo_size		= sizeof(struct net_device_ops),
+	.extended.ndo_change_mtu = stt_change_mtu,
+#else
 	.ndo_change_mtu         = stt_change_mtu,
+#endif
 	.ndo_validate_addr      = eth_validate_addr,
 	.ndo_set_mac_address    = eth_mac_addr,
 #ifdef USE_UPSTREAM_TUNNEL
