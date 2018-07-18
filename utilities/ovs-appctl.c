@@ -91,6 +91,7 @@ Targets:\n\
 Common commands:\n\
   list-commands      List commands supported by the target\n\
   version            Print version of the target\n\
+  rconn/show         Show SB DB connection status for chassis\n\
   vlog/list          List current logging levels\n\
   vlog/list-pattern  List logging patterns for each destination.\n\
   vlog/set [SPEC]\n\

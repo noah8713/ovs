@@ -87,6 +87,9 @@ Lists the commands supported by the target.
 .IP "\fBversion\fR"
 Displays the version and compilation date of the target.
 .
+.IP "\fBrconn/show\fR"
+Show SB DB connection status for chassis.
+.
 .SS LOGGING COMMANDS
 Open vSwitch has several log levels.  The highest-severity log level is:
 .

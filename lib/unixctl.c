@@ -91,6 +91,13 @@ unixctl_version(struct unixctl_conn *conn, int argc OVS_UNUSED,
     unixctl_command_reply(conn, ovs_get_program_version());
 }
 
+static void
+unixctl_rconn_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
+                   const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
+{
+    unixctl_command_reply(conn, ovs_get_chassis_sb_conn_stat());
+}
+
 /* Registers a unixctl command with the given 'name'.  'usage' describes the
  * arguments to the command; it is used only for presentation to the user in
  * "list-commands" output.
@@ -253,6 +260,7 @@ unixctl_server_create(const char *path, struct unixctl_server **serverp)
     unixctl_command_register("list-commands", "", 0, 0, unixctl_list_commands,
                              NULL);
     unixctl_command_register("version", "", 0, 0, unixctl_version, NULL);
+    unixctl_command_register("rconn/show", "", 0, 0, unixctl_rconn_show, NULL);
 
     server = xmalloc(sizeof *server);
     server->listener = listener;

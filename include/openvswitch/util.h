@@ -29,6 +29,7 @@ void ovs_set_program_name(const char *name, const char *version);
 
 const char *ovs_get_program_name(void);
 const char *ovs_get_program_version(void);
+const char *ovs_get_chassis_sb_conn_stat(void);
 
 /* Expands to a string that looks like "<file>:<line>", e.g. "tmp.c:10".
  *

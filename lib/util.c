@@ -634,7 +634,20 @@ ovs_get_program_version(void)
 {
     return program_version;
 }
-
+/* Returns a pointer to a string describing chassis sb connection status
+ * whether connected or not.  The caller must not modify or free the returned
+ * string.
+ */
+const char *
+ovs_get_chassis_sb_conn_stat(void)
+{
+    /* TODO: Need a way to dynamically get sb db vip IP.
+     * The run netstat -tpn | grep sb_db_vip_ip | grep ovn-cont 
+     * return connected else not-connected. 
+     */
+     char *connected = "connected";
+     return connected;
+}
 /* Returns a pointer to a string describing the program name.  The
  * caller must not modify or free the returned string.
  */
