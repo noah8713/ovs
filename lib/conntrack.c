@@ -1156,8 +1156,11 @@ conn_update_state_alg(struct conntrack *ct, struct dp_packet *pkt,
         } else {
             *create_new_conn = conn_update_state(ct, pkt, ctx, &conn, now,
                                                 bucket);
-            handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
-                           !!nat_action_info);
+
+            if (*create_new_conn == false) {
+                handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
+                               !!nat_action_info);
+            }
         }
         return true;
     }
@@ -1246,9 +1249,9 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     }
 
     const struct alg_exp_node *alg_exp = NULL;
+    struct alg_exp_node alg_exp_entry;
 
     if (OVS_UNLIKELY(create_new_conn)) {
-        struct alg_exp_node alg_exp_entry;
 
         ct_rwlock_rdlock(&ct->resources_lock);
         alg_exp = expectation_lookup(&ct->alg_expectations, &ctx->key,
