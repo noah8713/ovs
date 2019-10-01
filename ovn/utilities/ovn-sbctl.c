@@ -82,7 +82,7 @@ static struct ovsdb_idl_txn *the_idl_txn;
 OVS_NO_RETURN static void sbctl_exit(int status);
 
 /* --leader-only, --no-leader-only: Only accept the leader in a cluster. */
-static int leader_only = true;
+static int leader_only = false;
 
 static void sbctl_cmd_init(void);
 OVS_NO_RETURN static void usage(void);
@@ -93,7 +93,7 @@ static bool do_sbctl(const char *args, struct ctl_command *, size_t n,
                      struct ovsdb_idl *);
 
 int
-main(int argc, char *argv[])
+main(int argc, char *argv_[])
 {
     struct ovsdb_idl *idl;
     struct ctl_command *commands;
@@ -101,12 +101,44 @@ main(int argc, char *argv[])
     unsigned int seqno;
     size_t n_commands;
 
-    set_program_name(argv[0]);
+    set_program_name(argv_[0]);
     fatal_ignore_sigpipe();
     vlog_set_levels(NULL, VLF_CONSOLE, VLL_WARN);
     vlog_set_levels_from_string_assert("reconnect:warn");
 
     sbctl_cmd_init();
+
+    /* Check if options are set via env var. */
+    static int ops_passed = false;
+    int i, j = 0;
+    char *ovn_sbctl_options = getenv("OVN_SBCTL_OPTIONS");
+    char **argv = xcalloc(argc + 1, sizeof( *argv_) + 1);
+    if (ovn_sbctl_options) {
+        for (i = 0; i < argc; i++) {
+            if (strcmp(argv_[i], ovn_sbctl_options) == 0) {
+                ops_passed = true;
+                break;
+            }
+        }
+        /* if option not passed via cli, read env var set by user.*/
+        if (!ops_passed) {
+            for (i = 0, j = 0; i < argc; i++) {
+                if (j == 1) {
+                    argv[j] = ovn_sbctl_options;
+                    j++;
+                }
+                argv[j] = xstrdup(argv_[i]);
+                j++;
+            }
+            argc = j;
+        }
+    }
+    if (ops_passed || !ovn_sbctl_options) {
+        /* Copy args for parsing as is from argv_ */
+        for (i = 0; i < argc; i++) {
+            argv[i] = xstrdup(argv_[i]);
+        }
+    }
 
     /* Parse command line. */
     char *args = process_escape_args(argv);
@@ -147,6 +179,7 @@ main(int argc, char *argv[])
             seqno = ovsdb_idl_get_seqno(idl);
             if (do_sbctl(args, commands, n_commands, idl)) {
                 free(args);
+                free(argv);
                 exit(EXIT_SUCCESS);
             }
         }
