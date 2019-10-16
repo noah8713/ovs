@@ -50,6 +50,8 @@ struct ovs_cmdl_parsed_option {
     const struct option *o;
     char *arg;
 };
+char **ovs_cmdl_env_parse_all(int *argcp, char *argv_[],
+                              char *env_options);
 char *ovs_cmdl_parse_all(int argc, char *argv[], const struct option *,
                          struct ovs_cmdl_parsed_option **, size_t *)
     OVS_WARN_UNUSED_RESULT;
